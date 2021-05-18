@@ -46,6 +46,7 @@ LICENSE_PATH = os.path.join(
 
 tasks: List[asyncio.Task] = []
 
+notification_handler = {}
 
 def get_folder_size(folder):
     return sizeof_fmt(sum(file.stat().st_size for file in Path(folder).rglob("*")))
@@ -95,6 +96,8 @@ def main():
 
 
 @click.command()
+@click.option("--headless", is_flag=True, help="Headless mode.")
+@click.option("--single-shot", is_flag=True, help="Quit after 1 successful purchase")
 @click.option(
     "--p",
     type=str,
@@ -104,12 +107,70 @@ def main():
 @click.option(
     "--delay", type=float, default=5.0, help="Time to wait between checks for item[s]"
 )
+@click.option(
+    "--proxies",
+    is_flag=True,
+    default=False,
+    help="Use proxies list",
+)
+@click.option(
+    "--prefix",
+    type=str,
+    default="",
+    help="Prefix for log messages",
+)
+@click.option(
+    "--config-file",
+    type=str,
+    default="config/amazon_config.json",
+    help="Config file to load",
+)
+@click.option(
+    "--apprise-config-file",
+    type=str,
+    default="config/apprise.conf",
+    help="Apprise Config file to load",
+)
+@click.option(
+    "--credentials-file",
+    type=str,
+    default=None,
+    help="Credentials file to use",
+)
+@click.option(
+    "--checkshipping",
+    is_flag=True,
+    help="Factor shipping costs into reserve price and look for items with a shipping price",
+)
 @notify_on_crash
-def amazon_aio(p, delay):
+def amazon_aio(
+    headless,
+    single_shot,
+    p,
+    delay,
+    proxies,
+    prefix,
+    config_file,
+    apprise_config_file,
+    credentials_file,
+    checkshipping
+):
     log.debug("Creating AIO Amazon Store Handler")
+    global notification_handler
+    notification_handler = NotificationHandler(apprise_config=apprise_config_file, prefix=prefix)
+    notification_handler.sound_enabled = False
     aio_amazon_obj = AIO_AmazonStoreHandler(
-        notification_handler=notification_handler, encryption_pass=p, delay=delay
+        notification_handler=notification_handler,
+        encryption_pass=p,
+        delay=delay,
+        headless=headless,
+        single_shot=single_shot,
+        config_file=config_file,
+        use_proxies=proxies,
+        credentials_file=credentials_file,
+        check_shipping=checkshipping,
     )
+
     global tasks
     log.debug("Creating AIO Amazon Store Tasks")
     tasks = asyncio.run(aio_amazon_obj.run_async())
@@ -303,4 +364,3 @@ else:
     )
 
 global_config = GlobalConfig()
-notification_handler = NotificationHandler()

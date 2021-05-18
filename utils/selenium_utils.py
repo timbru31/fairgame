@@ -208,12 +208,12 @@ def create_driver(options):
 
 
 def selenium_initialization(
-    options, profile_path, no_image=False, slow_mode=True, headless=False
+    options, profile_path, amazon_domain, no_image=False, slow_mode=True, headless=False
 ):
     if headless:
         enable_headless()
     prefs = get_prefs()
-    set_options(options=options, profile_path=profile_path, prefs=prefs)
+    set_options(options=options, profile_path=profile_path, prefs=prefs, amazon_domain=amazon_domain)
     modify_browser_profile()
 
 
@@ -233,9 +233,9 @@ def modify_browser_profile():
         pass
 
 
-def set_options(options, profile_path, prefs, slow_mode=True):
+def set_options(options, profile_path, prefs, amazon_domain, slow_mode=True):
     options.add_experimental_option("prefs", prefs)
-    options.add_argument(f"user-data-dir={profile_path}")
+    options.add_argument(f"user-data-dir={profile_path}-{amazon_domain}")
     if not slow_mode:
         options.set_capability("pageLoadStrategy", "none")
 

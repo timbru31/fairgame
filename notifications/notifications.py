@@ -37,12 +37,17 @@ class NotificationHandler:
     enabled_handlers = []
     sound_enabled = True
 
-    def __init__(self):
-        if path.exists(APPRISE_CONFIG_PATH):
-            log.info(f"Initializing Apprise handler using: {APPRISE_CONFIG_PATH}")
+    def __init__(
+        self,
+        apprise_config=APPRISE_CONFIG_PATH,
+        prefix=""
+    ):
+        if path.exists(apprise_config):
+            log.info(f"Initializing Apprise handler using: {apprise_config}")
             self.apb = apprise.Apprise()
             config = apprise.AppriseConfig()
-            config.add(APPRISE_CONFIG_PATH)
+            config.add(apprise_config)
+            self.prefix = prefix
             # Get the service names from the config, not the Apprise instance when reading from config file
             for server in config.servers():
                 log.info(f"Found {server.service_name} configuration")
@@ -53,12 +58,12 @@ class NotificationHandler:
             self.enabled = True
         else:
             self.enabled = False
-            log.info(f"No Apprise config found at {APPRISE_CONFIG_PATH}.")
-            log.info(f"For notifications, see {APPRISE_CONFIG_PATH}_template")
+            log.info(f"No Apprise config found at {apprise_config}.")
+            log.info(f"For notifications, see {apprise_config}_template")
 
     def send_notification(self, message, ss_name=[], **kwargs):
         if self.enabled:
-            self.queue.put((message, ss_name))
+            self.queue.put((self.prefix + (" " if self.prefix else "") + message, ss_name))
 
     def message_sender(self):
         while True:

@@ -117,6 +117,7 @@ class AmazonCheckoutHandler(BaseStoreHandler):
         password=None,
         timer=7200,
         cookie_list=None,
+        amazon_domain="smile.amazon.com"
     ):
         log.debug("Initializing AmazonCheckoutHandler")
         self.profile_path = profile_path
@@ -125,9 +126,10 @@ class AmazonCheckoutHandler(BaseStoreHandler):
             enable_headless()
         self.amazon_config = amazon_config
         self.notification_handler = notification_handler
+        self.amazon_domain = amazon_domain
 
         # Selenium setup
-        selenium_initialization(options=options, profile_path=self.profile_path)
+        selenium_initialization(options=options, profile_path=self.profile_path, amazon_domain=self.amazon_domain)
         self.homepage_titles = amazon_config["HOME_PAGE_TITLES"]
         self.time_interval = timer
         self.cookie_list = cookie_list
@@ -135,6 +137,7 @@ class AmazonCheckoutHandler(BaseStoreHandler):
         self.checkout_session: aiohttp.ClientSession = aiohttp.ClientSession(
             headers=HEADERS
         )
+
 
     def pull_cookies(self):
         # Spawn the web browser
@@ -150,16 +153,20 @@ class AmazonCheckoutHandler(BaseStoreHandler):
         return cookies
 
     def login(self):
-        domain = "smile.amazon.com"
-        log.info(f"Logging in to {domain}...")
-
-        amazonsmile_url = "https://smile.amazon.com/ap/signin/ref=smi_ge2_ul_si_rl?_encoding=UTF8&ie=UTF8&openid.assoc_handle=amzn_smile&openid.claimed_id=http://specs.openid.net/auth/2.0/identifier_select&openid.identity=http://specs.openid.net/auth/2.0/identifier_select&openid.mode=checkid_setup&openid.ns=http://specs.openid.net/auth/2.0&openid.ns.pape=http://specs.openid.net/extensions/pape/1.0&openid.pape.max_auth_age=0&openid.return_to=https://smile.amazon.com/gp/charity/homepage.html?ie=UTF8&newts=1&orig=%2F"
-        amazoncom_url = "https://www.amazon.com/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fwww.amazon.com%2F%3Fref_%3Dnav_signin&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=usflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0&"
+        log.info(f"Logging in to {self.amazon_domain}...")
+        tld = self.amazon_domain.split(".")[-1]
+        smile_handle = f"amzn_smile_desktop_{tld}"
+        if tld == "com":
+            smile_handle = "amzn_smile"
+        if tld == "uk":
+            tld = "gb"
+        amazonsmile_url = f"https://{self.amazon_domain}/ap/signin/ref=smi_ge2_ul_si_rl?_encoding=UTF8&ie=UTF8&openid.assoc_handle={smile_handle}&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.mode=checkid_setup&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0&openid.ns.pape=http%3A%2F%2Fspecs.openid.net%2Fextensions%2Fpape%2F1.0&openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F{self.amazon_domain}%2Fgp%2Fcharity%2Fhomepage.html%3Fie%3DUTF8%26%252AVersion%252A%3D1%26%252Aentries%252A%3D0%26newts%3D1%26ref_%3Dsmi_chpf_redirect"
+        amazoncom_url = f"https://{self.amazon_domain}/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2F{self.amazon_domain}%2F%3Fref_%3Dnav_signin&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle={tld}flex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0&"
         email_field: Optional[WebElement] = None
         remember_me: Optional[WebElement] = None
         password_field: Optional[WebElement] = None
 
-        if "smile" in domain:
+        if "smile" in self.amazon_domain:
             url = amazonsmile_url
         else:
             url = amazoncom_url
@@ -411,8 +418,7 @@ class AmazonCheckoutHandler(BaseStoreHandler):
             self.checkout_session.headers["x-amz-checkout-csrf-token"] = session_id
         self.checkout_session.cookie_jar.update_cookies(cookies)
         # It appears the amazon session is valid for 366 days.
-        domain = "smile.amazon.com"
-        resp = await self.checkout_session.get(f"https://{domain}")
+        resp = await self.checkout_session.get(f"https://{self.amazon_domain}")
         html_text = await resp.text()
         save_html_response("session-get", resp.status, html_text)
         while True:
@@ -423,19 +429,24 @@ class AmazonCheckoutHandler(BaseStoreHandler):
                 continue
             start_time = time.time()
             TURBO_INITIATE_MAX_RETRY = 50
-            retry = 0
+            retry = 1
             pid = None
             anti_csrf = None
-            while (not (pid and anti_csrf)) and retry < TURBO_INITIATE_MAX_RETRY:
+            while (not (pid and anti_csrf)) and retry <= TURBO_INITIATE_MAX_RETRY:
+                message = f"calling turbo-initiate, try {retry}/50"
+                log.warning(message)
+                self.notification_handler.send_notification(message)
                 pid, anti_csrf = await turbo_initiate(
-                    s=self.checkout_session, qualified_seller=qualified_seller
+                    domain=self.amazon_domain,s=self.checkout_session, notification_handler=self.notification_handler, qualified_seller=qualified_seller
                 )
                 retry += 1
             if pid and anti_csrf:
                 if await turbo_checkout(
-                    s=self.checkout_session, pid=pid, anti_csrf=anti_csrf
+                    domain=self.amazon_domain,s=self.checkout_session, pid=pid, anti_csrf=anti_csrf, notification_handler=self.notification_handler
                 ):
-                    log.info("Maybe completed checkout")
+                    message = "Maybe completed checkout"
+                    log.warning(message)
+                    self.notification_handler.send_notification(message)
                     time_difference = time.time() - start_time
                     log.info(
                         f"Time from stock found to checkout: {round(time_difference,2)} seconds."
@@ -443,7 +454,7 @@ class AmazonCheckoutHandler(BaseStoreHandler):
                     try:
                         status, text = await aio_get(
                             self.checkout_session,
-                            f"https://{domain}/gp/buy/thankyou/handlers/display.html?_from=cheetah&checkMFA=1&purchaseId={pid}&referrer=yield&pid={pid}&pipelineType=turbo&clientId=retailwebsite&temporaryAddToCart=1&hostPage=detail&weblab=RCX_CHECKOUT_TURBO_DESKTOP_PRIME_87783",
+                            f"https://{self.amazon_domain}/gp/buy/thankyou/handlers/display.html?_from=cheetah&checkMFA=1&purchaseId={pid}&referrer=yield&pid={pid}&pipelineType=turbo&clientId=retailwebsite&temporaryAddToCart=1&hostPage=detail&weblab=RCX_CHECKOUT_TURBO_DESKTOP_PRIME_87783",
                         )
                         save_html_response("order-confirm", status, text)
                     except aiohttp.ClientError:
@@ -495,9 +506,8 @@ async def aio_get(client, url, data=None):
 
 @timer
 async def turbo_initiate(
-    s: aiohttp.ClientSession, qualified_seller: Optional[SellerDetail] = None
+    domain, s: aiohttp.ClientSession, notification_handler: NotificationHandler, qualified_seller: Optional[SellerDetail] = None
 ):
-    domain = "smile.amazon.com"
     url = f"https://{domain}/checkout/turbo-initiate?ref_=dp_start-bbf_1_glance_buyNow_2-1&pipelineType=turbo&weblab=RCX_CHECKOUT_TURBO_DESKTOP_NONPRIME_87784&temporaryAddToCart=1"
     pid = None
     anti_csrf = None
@@ -533,9 +543,13 @@ async def turbo_initiate(
     if find_anti_csrf:
         anti_csrf = find_anti_csrf.group(1)
     if pid and anti_csrf:
-        log.debug("turbo-initiate successful")
+        message = "turbo-initiate successful"
+        log.warning(message)
+        notification_handler.send_notification(message)
         return pid, anti_csrf
-    log.debug("turbo-initiate unsuccessful")
+    message = "turbo-initiate unsuccessful"
+    log.warning(message)
+    notification_handler.send_notification(message)
     save_html_response(
         filename="turbo_ini_unsuccessful", status=000, body=tree.text_content()
     )
@@ -543,9 +557,10 @@ async def turbo_initiate(
 
 
 @timer
-async def turbo_checkout(s: aiohttp.ClientSession, pid, anti_csrf):
-    domain = "smile.amazon.com"
-    log.debug("trying to checkout")
+async def turbo_checkout(domain, s: aiohttp.ClientSession, notification_handler: NotificationHandler, pid, anti_csrf):
+    message = "trying to checkout"
+    log.warning(message)
+    notification_handler.send_notification(message)
     url = f"https://{domain}/checkout/spc/place-order?ref_=chk_spc_placeOrder&clientId=retailwebsite&pipelineType=turbo&pid={pid}"
     header_update = {"anti-csrftoken-a2z": anti_csrf}
     s.headers.update(header_update)
@@ -553,11 +568,15 @@ async def turbo_checkout(s: aiohttp.ClientSession, pid, anti_csrf):
     status, text = await aio_post(client=s, url=url)
     save_html_response("turbo_checkout", status, text)
     if status == 200 or status == 500:
-        log.debug("Checkout maybe successful, check order page!")
+        message = "Checkout maybe successful, check order page!"
+        log.warning(message)
+        notification_handler.send_notification(message)
         # TODO: Implement GET request to confirm checkout
         return True
 
-    log.debug(f"Status Code: {status} was returned")
+    message = f"Status Code: {r.status_code} was returned"
+    log.warning(message)
+    notification_handler.send_notification(message)
     return False
 
 

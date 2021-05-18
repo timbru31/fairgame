@@ -42,8 +42,13 @@ class AmazonStoreHandler(BaseStoreHandler):
         self,
         notification_handler: NotificationHandler,
         delay: float,
+        headless=False,
         single_shot=False,
         encryption_pass=None,
+        use_proxies=False,
+        check_shipping = False,
+        config_file=CONFIG_FILE_PATH,
+        credentials_file=None
     ) -> None:
         super().__init__()
         self.shuffle = True
@@ -58,17 +63,27 @@ class AmazonStoreHandler(BaseStoreHandler):
         self.amazon_domain = "smile.amazon.com"
         self.webdriver_child_pids = []
         self.single_shot = single_shot
+        self.headless = headless
         self.delay = delay
+        self.config_file = config_file
+        self.use_proxies = use_proxies
+        self.check_shipping = check_shipping
 
         from cli.cli import global_config
 
         global amazon_config
-        amazon_config = global_config.get_amazon_config(encryption_pass)
+        if credentials_file:
+            amazon_config = global_config.get_amazon_config(encryption_pass, credentials_file=credentials_file)
+        else:
+            amazon_config = global_config.get_amazon_config(encryption_pass)
         self.profile_path = global_config.get_browser_profile_path()
 
         # Load up our configuration
         self.parse_config()
         log.debug("AmazonStoreHandler initialization complete.")
+        message = f"Starting to hunt items at {STORE_NAME}"
+        log.info(message)
+        self.notification_handler.send_notification(message)
 
     def __del__(self):
         message = f"Shutting down {STORE_NAME} Store Handler."
@@ -83,16 +98,18 @@ class AmazonStoreHandler(BaseStoreHandler):
         amazon_checkout = AmazonCheckoutHandler(
             notification_handler=self.notification_handler,
             amazon_config=amazon_config,
-            cookie_list=[
-                "session-id",
-                "x-amz-captcha-1",
-                "x-amz-captcha-2",
-                "ubid-main",
-                "x-main",
-                "at-main",
-                "sess-at-main",
+            cookie_list = [
+                "session-id", "x-amz-captcha-1", "x-amz-captcha-2",
+                "ubid-main", "x-main", "at-main", "sess-at-main",
+                "x-acbde", "at-acbde", "ubid-acbde", "sess-at-acbde",
+                "x-acbes", "at-acbes", "ubid-acbes", "sess-at-acbes",
+                "x-acbfr", "at-acbfr", "ubid-acbfr", "sess-at-acbfr",
+                "x-acbit", "at-acbit", "ubid-acbit", "sess-at-acbit",
+                "x-acbuk", "at-acbuk", "ubid-acbuk", "sess-at-acbuk"
             ],
             profile_path=self.profile_path,
+            amazon_domain=self.amazon_domain,
+            headless=self.headless
         )
         log.debug("Creating monitoring handler")
         amazon_monitoring = AmazonMonitoringHandler(
@@ -101,6 +118,8 @@ class AmazonStoreHandler(BaseStoreHandler):
             amazon_config=amazon_config,
             tasks=checkout_tasks,
             delay=self.delay,
+            use_proxies=self.use_proxies,
+            checkshipping=self.check_shipping,
         )
         log.debug("Creating checkout worker and monitoring task(s)")
         future = []
@@ -118,10 +137,10 @@ class AmazonStoreHandler(BaseStoreHandler):
         return
 
     def parse_config(self):
-        log.debug(f"Processing config file from {CONFIG_FILE_PATH}")
+        log.debug(f"Processing config file from {self.config_file}")
         # Parse the configuration file to get our hunt list
         try:
-            with open(CONFIG_FILE_PATH) as json_file:
+            with open(self.config_file) as json_file:
                 config = json.load(json_file)
                 self.amazon_domain = config.get("amazon_domain", "smile.amazon.com")
 
@@ -130,7 +149,7 @@ class AmazonStoreHandler(BaseStoreHandler):
 
         except FileNotFoundError:
             log.error(
-                f"Configuration file not found at {CONFIG_FILE_PATH}.  Please see {CONFIG_FILE_PATH}_template."
+                f"Configuration file not found at {self.config_file}.  Please see {CONFIG_FILE_PATH}_template."
             )
             exit(1)
         log.debug(f"Found {len(self.item_list)} items to track at {STORE_NAME}.")
@@ -181,7 +200,7 @@ class AmazonStoreHandler(BaseStoreHandler):
                             condition=condition,
                             merchant_id=merchant_id,
                             furl=furl(
-                                url=f"https://smile.amazon.com/gp/aod/ajax?asin={asin}"
+                                url=f"https://{self.amazon_domain}/gp/aod/ajax?asin={asin}"
                             ),
                         )
                     )
